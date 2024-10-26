@@ -132,19 +132,60 @@ def delete_card(deck_name: str, question: str):
     decks[deck_name].cards = [c for c in decks[deck_name].cards if c.question != question]
     return {"message": f"Card '{question}' deleted from deck '{deck_name}'."}
 
-@app.get("/decks/{deck_name}/progress/")
-def show_progress(deck_name: str):
-    if deck_name not in decks:
-        raise HTTPException(status_code=404, detail="Deck not found")
+# @app.get("/decks/{deck_name}/progress/")
+# def show_progress(deck_name: str):
+#     if deck_name not in decks:
+#         raise HTTPException(status_code=404, detail="Deck not found")
+#
+#     total_cards = len(decks[deck_name].cards)
+#     reviewed_cards = len([card for card in decks[deck_name].cards if card.last_reviewed])
+#     correct_cards = len([card for card in decks[deck_name].cards if card.box > 1])
+#
+#     return {
+#         "total_cards": total_cards,
+#         "reviewed_cards": reviewed_cards,
+#         "correct_cards": correct_cards,
+#         "accuracy": (correct_cards / reviewed_cards) * 100 if reviewed_cards else 0
+#     }
 
-    total_cards = len(decks[deck_name].cards)
-    reviewed_cards = len([card for card in decks[deck_name].cards if card.last_reviewed])
-    correct_cards = len([card for card in decks[deck_name].cards if card.box > 1])
+@app.get("/decks/{deck_id}/progress/")
+def show_progress(deck_id: int, db: Session = Depends(get_db)):
+    total_cards = db.query(CardDB).filter(CardDB.deck_id == deck_id).count()
+    reviewed_cards = db.query(CardDB).filter(CardDB.deck_id == deck_id, CardDB.last_reviewed != None).count()
+    correct_cards = db.query(CardDB).filter(CardDB.deck_id == deck_id, CardDB.box > 1).count()
 
     return {
         "total_cards": total_cards,
         "reviewed_cards": reviewed_cards,
         "correct_cards": correct_cards,
-        "accuracy": (correct_cards / reviewed_cards) * 100 if reviewed_cards else 0
+        "accuracy": (correct_cards / reviewed_cards) * 100 if reviewed_cards > 0 else 0
     }
 
+import json
+
+@app.get("/decks/{deck_id}/export/")
+def export_deck(deck_id: int, db: Session = Depends(get_db)):
+    deck = db.query(DeckDB).filter(DeckDB.id == deck_id).first()
+
+    if not deck:
+        raise HTTPException(status_code=404, detail="Deck not found")
+
+    deck_data = {
+        "name": deck.name,
+        "cards": [{"question": card.question, "answer": card.answer, "box": card.box} for card in deck.cards]
+    }
+    return json.dumps(deck_data)
+
+@app.post("/decks/import/")
+def import_deck(deck_data: dict, db: Session = Depends(get_db)):
+    db_deck = DeckDB(name=deck_data['name'])
+    db.add(db_deck)
+    db.commit()
+    db.refresh(db_deck)
+
+    for card_data in deck_data['cards']:
+        db_card = CardDB(question=card_data['question'], answer=card_data['answer'], box=card_data['box'], deck_id=db_deck.id)
+        db.add(db_card)
+
+    db.commit()
+    return {"message": "Deck imported successfully"}
