@@ -2,6 +2,49 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 import datetime
+from sqlalchemy import Column, Integer, String, Date, ForeignKey
+from sqlalchemy.orm import relationship, declarative_base
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from fastapi import Depends
+from sqlalchemy.orm import Session
+
+# Create SQLite engine (or use PostgreSQL with the appropriate connection string)
+SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
+
+engine = create_engine(SQLALCHEMY_DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+Base = declarative_base()
+
+# Card model for database
+class CardDB(Base):
+    __tablename__ = 'cards'
+    id = Column(Integer, primary_key=True, index=True)
+    question = Column(String, index=True)
+    answer = Column(String)
+    box = Column(Integer, default=1)
+    last_reviewed = Column(Date)
+    next_review = Column(Date)
+    deck_id = Column(Integer, ForeignKey('decks.id'))
+
+# Deck model for database
+class DeckDB(Base):
+    __tablename__ = 'decks'
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True)
+    cards = relationship("CardDB", back_populates="deck")
+
+# Make sure to create the tables
+Base.metadata.create_all(bind=engine)
+
+# Dependency for getting DB session
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 app = FastAPI()
 
 # Card model
