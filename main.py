@@ -97,13 +97,10 @@ def add_card(deck_id: int, card: Card, db: Session = Depends(get_db)):
     db.refresh(db_card)
     return db_card
 
-@app.put("/decks/{deck_name}/cards/{question}/review/")
-def review_card(deck_name: str, question: str, correct: bool):
-    if deck_name not in decks:
-        raise HTTPException(status_code=404, detail="Deck not found")
+@app.put("/decks/{deck_id}/cards/{card_id}/review/")
+def review_card(deck_id: int, card_id: int, correct: bool, db: Session = Depends(get_db)):
+    card = db.query(CardDB).filter(CardDB.id == card_id, CardDB.deck_id == deck_id).first()
 
-    # Find the card by question
-    card = next((c for c in decks[deck_name].cards if c.question == question), None)
     if not card:
         raise HTTPException(status_code=404, detail="Card not found")
 
@@ -111,10 +108,8 @@ def review_card(deck_name: str, question: str, correct: bool):
         card.box += 1
         card.last_reviewed = datetime.date.today()
     else:
-        card.box = 1  # Reset to box 1 if wrong
-        card.last_reviewed = datetime.date.today()
+        card.box = 1  # Reset if wrong
 
-    # Schedule next review based on the box
     if card.box == 1:
         card.next_review = datetime.date.today() + datetime.timedelta(days=1)
     elif card.box == 2:
@@ -122,7 +117,8 @@ def review_card(deck_name: str, question: str, correct: bool):
     elif card.box == 3:
         card.next_review = datetime.date.today() + datetime.timedelta(days=7)
 
-    return {"message": "Card reviewed and updated successfully."}
+    db.commit()
+    return {"message": "Card reviewed successfully."}
 
 @app.delete("/decks/{deck_name}/cards/{question}")
 def delete_card(deck_name: str, question: str):
