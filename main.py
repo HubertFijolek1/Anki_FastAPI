@@ -68,19 +68,34 @@ decks = {}
 def read_root():
     return {"message": "Welcome to AnkiApp-like Flashcard System!"}
 
-@app.post("/decks/")
-def create_deck(deck: Deck):
-    if deck.name in decks:
-        raise HTTPException(status_code=400, detail="Deck already exists")
-    decks[deck.name] = deck
-    return {"message": f"Deck '{deck.name}' created successfully."}
+# @app.post("/decks/")
+# def create_deck(deck: Deck):
+#     if deck.name in decks:
+#         raise HTTPException(status_code=400, detail="Deck already exists")
+#     decks[deck.name] = deck
+#     return {"message": f"Deck '{deck.name}' created successfully."}
+@app.post("/decks/", response_model=Deck)
+def create_deck(deck: Deck, db: Session = Depends(get_db)):
+    db_deck = DeckDB(name=deck.name)
+    db.add(db_deck)
+    db.commit()
+    db.refresh(db_deck)
+    return db_deck
 
-@app.post("/decks/{deck_name}/cards/")
-def add_card_to_deck(deck_name: str, card: Card):
-    if deck_name not in decks:
-        raise HTTPException(status_code=404, detail="Deck not found")
-    decks[deck_name].cards.append(card)
-    return {"message": f"Card added to deck '{deck_name}'."}
+# @app.post("/decks/{deck_name}/cards/")
+# def add_card_to_deck(deck_name: str, card: Card):
+#     if deck_name not in decks:
+#         raise HTTPException(status_code=404, detail="Deck not found")
+#     decks[deck_name].cards.append(card)
+#     return {"message": f"Card added to deck '{deck_name}'."}
+
+@app.post("/decks/{deck_id}/cards/", response_model=Card)
+def add_card(deck_id: int, card: Card, db: Session = Depends(get_db)):
+    db_card = CardDB(question=card.question, answer=card.answer, deck_id=deck_id)
+    db.add(db_card)
+    db.commit()
+    db.refresh(db_card)
+    return db_card
 
 @app.put("/decks/{deck_name}/cards/{question}/review/")
 def review_card(deck_name: str, question: str, correct: bool):
