@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Request
 from pydantic import BaseModel
 from typing import List, Optional
 import datetime
@@ -7,6 +7,8 @@ from sqlalchemy.orm import relationship, sessionmaker, Session, declarative_base
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi.security import OAuth2PasswordBearer
+from fastapi.templating import Jinja2Templates
+import json
 
 # SQLAlchemy setup
 SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
@@ -21,6 +23,9 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+# Setup Jinja2 templates directory
+templates = Jinja2Templates(directory="templates")
 
 
 # Database Models
@@ -37,6 +42,9 @@ class CardDB(Base):
     question = Column(String, index=True)
     answer = Column(String)
     box = Column(Integer, default=1)
+    interval = Column(Integer, default=1)
+    ease_factor = Column(Float, default=2.5)
+    repetitions = Column(Integer, default=0)
     last_reviewed = Column(Date)
     next_review = Column(Date)
     deck_id = Column(Integer, ForeignKey('decks.id'))
@@ -46,7 +54,7 @@ class DeckDB(Base):
     __tablename__ = 'decks'
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True)
-    user_id = Column(Integer, ForeignKey('users.id'))  # Tie deck to user
+    user_id = Column(Integer, ForeignKey('users.id'))
     cards = relationship("CardDB", back_populates="deck")
 
 
@@ -142,14 +150,73 @@ def get_deck(deck_id: int, db: Session = Depends(get_db), current_user: User = D
     return deck
 
 
-# Routes for Card Management
-@app.post("/decks/{deck_id}/cards/")
-def add_card(deck_id: int, card: Card, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    db_card = CardDB(question=card.question, answer=card.answer, deck_id=deck_id)
-    db.add(db_card)
+@app.get("/decks/")
+def get_decks(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    decks = db.query(DeckDB).filter(DeckDB.user_id == current_user.id).all()
+    return templates.TemplateResponse("decks.html", {"request": request, "decks": decks, "user": current_user})
+
+
+@app.get("/decks/{deck_id}/export/")
+def export_deck(deck_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    deck = db.query(DeckDB).filter(DeckDB.id == deck_id, DeckDB.user_id == current_user.id).first()
+    if not deck:
+        raise HTTPException(status_code=404, detail="Deck not found")
+
+    deck_data = {
+        "name": deck.name,
+        "cards": [{"question": card.question, "answer": card.answer, "box": card.box} for card in deck.cards]
+    }
+    return deck_data
+
+
+@app.post("/decks/import/")
+def import_deck(deck_data: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    db_deck = DeckDB(name=deck_data['name'], user_id=current_user.id)
+    db.add(db_deck)
     db.commit()
-    db.refresh(db_card)
-    return db_card
+    db.refresh(db_deck)
+    for card_data in deck_data['cards']:
+        db_card = CardDB(
+            question=card_data['question'],
+            answer=card_data['answer'],
+            box=card_data.get('box', 1),
+            deck_id=db_deck.id
+        )
+        db.add(db_card)
+    db.commit()
+    return {"message": "Deck imported successfully"}
+
+
+@app.get("/decks/{deck_id}/progress/")
+def show_progress(deck_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    total_cards = db.query(CardDB).filter(CardDB.deck_id == deck_id, DeckDB.user_id == current_user.id).count()
+    reviewed_cards = db.query(CardReviewHistory).filter(CardReviewHistory.user_id == current_user.id,
+                                                        CardReviewHistory.card_id == CardDB.id).count()
+    correct_reviews = db.query(CardReviewHistory).filter(CardReviewHistory.user_id == current_user.id,
+                                                         CardReviewHistory.correct == True).count()
+
+    # Example streak logic: How many consecutive days the user has reviewed cards
+    review_dates = db.query(CardReviewHistory.review_date).filter(
+        CardReviewHistory.user_id == current_user.id).distinct().all()
+    streak = calculate_streak(review_dates)
+
+    return {
+        "total_cards": total_cards,
+        "reviewed_cards": reviewed_cards,
+        "correct_reviews": correct_reviews,
+        "streak": streak,
+        "accuracy": (correct_reviews / reviewed_cards) * 100 if reviewed_cards > 0 else 0
+    }
+
+
+def calculate_streak(review_dates):
+    streak = 0
+    today = datetime.date.today()
+    for i, date in enumerate(sorted(review_dates, reverse=True)):
+        if date != today - datetime.timedelta(days=i):
+            break
+        streak += 1
+    return streak
 
 
 # Review a Card with SM2 Algorithm
