@@ -39,16 +39,58 @@ def add_card_to_deck(deck_name: str, card: Card):
     decks[deck_name].cards.append(card)
     return {"message": f"Card added to deck '{deck_name}'."}
 
-@app.get("/decks/{deck_name}/review/")
-def review_cards(deck_name: str):
+@app.put("/decks/{deck_name}/cards/{question}/review/")
+def review_card(deck_name: str, question: str, correct: bool):
     if deck_name not in decks:
         raise HTTPException(status_code=404, detail="Deck not found")
 
-    today = datetime.date.today()
-    due_cards = [card for card in decks[deck_name].cards if card.next_review <= today]
+    # Find the card by question
+    card = next((c for c in decks[deck_name].cards if c.question == question), None)
+    if not card:
+        raise HTTPException(status_code=404, detail="Card not found")
 
-    if not due_cards:
-        return {"message": "No cards to review today."}
+    if correct:
+        card.box += 1
+        card.last_reviewed = datetime.date.today()
+    else:
+        card.box = 1  # Reset to box 1 if wrong
+        card.last_reviewed = datetime.date.today()
 
-    return due_cards
+    # Schedule next review based on the box
+    if card.box == 1:
+        card.next_review = datetime.date.today() + datetime.timedelta(days=1)
+    elif card.box == 2:
+        card.next_review = datetime.date.today() + datetime.timedelta(days=3)
+    elif card.box == 3:
+        card.next_review = datetime.date.today() + datetime.timedelta(days=7)
+
+    return {"message": "Card reviewed and updated successfully."}
+
+@app.delete("/decks/{deck_name}/cards/{question}")
+def delete_card(deck_name: str, question: str):
+    if deck_name not in decks:
+        raise HTTPException(status_code=404, detail="Deck not found")
+
+    card = next((c for c in decks[deck_name].cards if c.question == question), None)
+    if not card:
+        raise HTTPException(status_code=404, detail="Card not found")
+
+    decks[deck_name].cards = [c for c in decks[deck_name].cards if c.question != question]
+    return {"message": f"Card '{question}' deleted from deck '{deck_name}'."}
+
+@app.get("/decks/{deck_name}/progress/")
+def show_progress(deck_name: str):
+    if deck_name not in decks:
+        raise HTTPException(status_code=404, detail="Deck not found")
+
+    total_cards = len(decks[deck_name].cards)
+    reviewed_cards = len([card for card in decks[deck_name].cards if card.last_reviewed])
+    correct_cards = len([card for card in decks[deck_name].cards if card.box > 1])
+
+    return {
+        "total_cards": total_cards,
+        "reviewed_cards": reviewed_cards,
+        "correct_cards": correct_cards,
+        "accuracy": (correct_cards / reviewed_cards) * 100 if reviewed_cards else 0
+    }
 
